@@ -1,6 +1,7 @@
 package smtp
 
 import (
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"net/smtp"
@@ -70,5 +71,56 @@ func (this *Smtp) SendMail(from, tos, subject, body string, contentType ...strin
 	message += "\r\n" + b64.EncodeToString([]byte(body))
 
 	auth := smtp.PlainAuth("", this.Username, this.Password, hp[0])
-	return smtp.SendMail(this.Address, auth, from, strings.Split(tos, ";"), []byte(message))
+
+	tlsconfig := &tls.Config{
+		InsecureSkipVerify: true,
+		ServerName:         this.Address,
+	}
+
+	host := hp[0]
+
+	conn, err := tls.Dial("tcp", this.Address, tlsconfig)
+	if err != nil {
+		return err
+	}
+
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return err
+	}
+
+	// step 1: Use Auth
+	if err = client.Auth(auth); err != nil {
+		return err
+	}
+
+	// step 2: add all from and to
+	if err = client.Mail(from); err != nil {
+		return err
+	}
+
+	for _, k := range strings.Split(tos, ";") {
+		if err = client.Rcpt(k); err != nil {
+			return err
+		}
+	}
+
+	// Data
+	w, err := client.Data()
+	if err != nil {
+		return err
+	}
+
+	_, err = w.Write([]byte(message))
+	if err != nil {
+		return err
+	}
+
+	err = w.Close()
+	if err != nil {
+		return err
+	}
+
+	client.Quit()
+	return nil
 }
